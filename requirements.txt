@@ -5,6 +5,6 @@ wordcloud
 STOPWORDS
 transformers
 torch
-CountVectorizer
+
 altair
 os
