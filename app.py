@@ -7,6 +7,7 @@ from wordcloud import WordCloud, STOPWORDS
 from sklearn.feature_extraction.text import CountVectorizer
 import os
 import altair as alt
+
 # ----------------------------
 # Page Setup
 # ----------------------------
@@ -46,30 +47,23 @@ df.drop_duplicates(inplace=True)
 # ----------------------------
 st.subheader("📈 Sentiment Distribution")
 
-# Prepare data
 sentiment_counts = df['predicted_sentiment'].value_counts().reset_index()
 sentiment_counts.columns = ['Sentiment', 'Count']
 
-# Create bar chart with labels
 bar_chart = alt.Chart(sentiment_counts).mark_bar().encode(
     x=alt.X('Sentiment', sort=['positive', 'neutral', 'negative']),
     y='Count',
     color=alt.Color('Sentiment', legend=None)
-).properties(
-    width=600,
-    height=400
-)
+).properties(width=600, height=400)
 
-# Add text labels on top of bars
 text = bar_chart.mark_text(
     align='center',
     baseline='bottom',
-    dy=-5  # Nudges text above bar
+    dy=-5
 ).encode(
     text='Count:Q'
 )
 
-# Display chart with labels
 st.altair_chart(bar_chart + text, use_container_width=True)
 
 # ----------------------------
@@ -91,13 +85,46 @@ for sentiment, percent in percentages.items():
     st.markdown(f"- {sentiment.capitalize()}: {percent:.2f}%")
 
 # ----------------------------
-# WordClouds
+# Keyword Analysis (Unique by Dominant Sentiment)
 # ----------------------------
-st.subheader("🔍 Top Keywords per Sentiment")
+st.subheader("🔍 Top Keywords per Sentiment (Unique by Dominant Sentiment)")
 stop_words = set(STOPWORDS).union({"https", "co", "RT"})
 
-def generate_wordcloud(text_series, title, colormap):
-    text = " ".join(text_series.astype(str))
+vectorizer = CountVectorizer(stop_words='english', max_features=1000)
+
+# Step 1: Word frequencies per sentiment
+word_freq_by_sentiment = {}
+for sentiment in ['positive', 'neutral', 'negative']:
+    texts = df[df['predicted_sentiment'] == sentiment]['COMMENT'].dropna().astype(str)
+    if not texts.empty:
+        X = vectorizer.fit_transform(texts)
+        sum_words = X.sum(axis=0)
+        word_freq = {word: int(sum_words[0, idx]) for word, idx in vectorizer.vocabulary_.items()}
+        word_freq_by_sentiment[sentiment] = word_freq
+
+# Step 2: Merge and assign to dominant sentiment
+combined_freq = {}
+for sentiment, freq_dict in word_freq_by_sentiment.items():
+    for word, freq in freq_dict.items():
+        if word not in combined_freq:
+            combined_freq[word] = {}
+        combined_freq[word][sentiment] = freq
+
+# Step 3: Keep only dominant sentiment per word
+final_top_words = {'positive': [], 'neutral': [], 'negative': []}
+for word, sentiment_freqs in combined_freq.items():
+    dominant_sentiment = max(sentiment_freqs, key=sentiment_freqs.get)
+    final_top_words[dominant_sentiment].append((word, sentiment_freqs[dominant_sentiment]))
+
+# Step 4: Sort & limit top N per sentiment
+for sentiment in final_top_words:
+    final_top_words[sentiment] = sorted(final_top_words[sentiment], key=lambda x: x[1], reverse=True)[:20]
+
+# ----------------------------
+# WordClouds (Based on Dominant Sentiment Only)
+# ----------------------------
+def generate_wordcloud_from_keywords(keyword_list, title, colormap):
+    text = " ".join([word for word, _ in keyword_list])
     wordcloud = WordCloud(
         max_font_size=50,
         max_words=40,
@@ -114,60 +141,36 @@ def generate_wordcloud(text_series, title, colormap):
 
 col1, col2 = st.columns(2)
 with col1:
-    generate_wordcloud(df[df['predicted_sentiment'] == 'positive']['COMMENT'], "Positive", "Greens")
+    generate_wordcloud_from_keywords(final_top_words['positive'], "Positive", "Greens")
 with col2:
-    generate_wordcloud(df[df['predicted_sentiment'] == 'negative']['COMMENT'], "Negative", "Reds")
+    generate_wordcloud_from_keywords(final_top_words['negative'], "Negative", "Reds")
 
 # ----------------------------
-# Top Keywords by Sentiment
+# Display Keyword Tables
 # ----------------------------
-
-vectorizer = CountVectorizer(stop_words='english', max_features=1000)
-
-top_words = {}
-for sentiment in ['positive', 'neutral', 'negative']:
-    texts = df[df['predicted_sentiment'] == sentiment]['COMMENT'].dropna().astype(str)
-    if not texts.empty:
-        X = vectorizer.fit_transform(texts)
-        sum_words = X.sum(axis=0)
-        word_freq = [(word, int(sum_words[0, idx])) for word, idx in vectorizer.vocabulary_.items()]
-        sorted_words = sorted(word_freq, key=lambda x: x[1], reverse=True)[:20]
-        top_words[sentiment] = sorted_words
-
-# Display keywords in 3 columns
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("### 🟢 Positive Keywords")
-    if 'positive' in top_words:
-        for word, freq in top_words['positive']:
-            st.write(f"{word}: {freq}")
+    for word, freq in final_top_words['positive']:
+        st.write(f"{word}: {freq}")
 
 with col2:
     st.markdown("### ⚪ Neutral Keywords")
-    if 'neutral' in top_words:
-        for word, freq in top_words['neutral']:
-            st.write(f"{word}: {freq}")
+    for word, freq in final_top_words['neutral']:
+        st.write(f"{word}: {freq}")
 
 with col3:
     st.markdown("### 🔴 Negative Keywords")
-    if 'negative' in top_words:
-        for word, freq in top_words['negative']:
-            st.write(f"{word}: {freq}")
-
-
-# Convert top_words dictionary into a DataFrame
-keyword_data = []
-for sentiment, words in top_words.items():
-    for word, freq in words:
-        keyword_data.append({"Sentiment": sentiment, "Keyword": word, "Frequency": freq})
+    for word, freq in final_top_words['negative']:
+        st.write(f"{word}: {freq}")
 
 # ----------------------------
 # Download Results
 # ----------------------------
-# Convert top_words to DataFrame
+# Export only dominant sentiment top keywords
 keyword_data = []
-for sentiment, words in top_words.items():
+for sentiment, words in final_top_words.items():
     for word, freq in words:
         keyword_data.append({"Sentiment": sentiment, "Keyword": word, "Frequency": freq})
 
