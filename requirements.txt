@@ -1,9 +1,6 @@
 streamlit
-sklearn
 pandas
 matplotlib
 wordcloud
-STOPWORDS
-transformers
-torch
+scikit-learn
 altair
